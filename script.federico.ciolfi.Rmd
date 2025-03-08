@@ -1,0 +1,1087 @@
+---
+title: "Examen"
+subtitle: "Métodos Estadísticos Avanzados en Ecología y Evolución"
+author: "Federico Ciolfi"
+date: "Marzo del 2020"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Librerías
+
+require(fitdistrplus)
+require(gamlss.dist) 
+library(formattable)
+library(ggplot2)
+library(cowplot)
+library(glmmTMB)
+library(car)
+library(broom.mixed)
+# library(sjPlot) Se carga más adelente por que interfiere en plot_grid (cowplot)
+require(DHARMa)
+library(ggeffects)
+require(doBy)
+library(lme4)
+library(parallel)
+library(pbkrtest)
+library(cAIC4)
+library(HLMdiag)
+library(MuMIn)
+library(multcomp)
+library(GGally)
+library(arm)
+library(influence.ME)
+library(pROC)
+
+```
+
+
+```{r echo=FALSE}
+# Carga de datos
+DF=read.csv("/home/federico/Escritorio/Examen/pregunta1.csv",header=T)
+```
+
+# PREGUNTA 1
+
+## a)
+La variable respuesta corresponde a un conteo, por lo cual es una variable numérica.   
+Sus posibles distribuciones de probabilidades son: Poisson, Binominal Negativa (BiNeg), Poisson Zero Inflated (zip), BiNeg Zero Inflated (zinb), Poisson Zero Augmented (zap) y BiNeg Zero Augmented (zanb).  La importancia de seleccionar una correcta distribución de probabilidades reside en minimizar la dispersión de los residuos y definir la función del enlace.  
+Se observa no solo por las gráficas de CDF y QQPLOT, sino también por los resultados del AIC, que la distribución de probabilidades que mejor se ajusta es la de zip (también zap ajusta muy bien).  Existen dos variables explicativas en este ejemplo, una categórica (sitio) con 4 niveles(a, b, c y d) y una numérica (humedad), por lo cual se trata de un caso de covarianza. 
+
+&nbsp;  
+
+
+&nbsp;
+```{r echo=FALSE, fig.height=4.5, message=FALSE, warning=FALSE, paged.print=TRUE}
+# Distribuciones candidatas para la variable respuesta
+
+zap=fitdist(DF$conteo, 'ZAP', start=list(mu=2.8))
+zanb=fitdist(DF$conteo, "ZANBI", start=list(mu=2.8))
+zip=fitdist(DF$conteo, 'ZIP', start=list(mu=2.8))
+zinb=fitdist(DF$conteo, "ZINBI", start=list(mu=2.8))
+poisson=fitdist(DF$conteo,"pois")
+negbinom=fitdist(DF$conteo,"nbinom")
+
+par(mfrow=c(1,2), mai=c(1,1,0.5,0.2), cex.lab=1, lwd=1,cex.axis=1)
+cdfcomp(list(poisson,negbinom,zap,zanb,zip,zinb),horizontals=F,addlegend=T,
+        legendtext=c("Poisson","NB","ZAP","ZANB", "ZIP","ZINB"), main="")
+qqcomp(list(poisson,negbinom,zap,zanb,zip,zinb),addlegend=T,
+       legendtext=c("Poisson","NB","ZAP","ZANB", "ZIP","ZINB"), main="")
+par(mfrow=c(1,1))
+
+```
+
+
+&nbsp;
+
+
+&nbsp;
+**ANÁLISIS DEL AIC**
+
+
+&nbsp;
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# AIC de las distribuciones
+
+aic1<-as.data.frame(gofstat(list(poisson,negbinom,zap,zanb,zip,zinb))$aic) 
+names (aic1)[1] = "AIC"
+format_table(aic1, format = "markdown", align = c("c", "c"))
+
+```
+  
+## b)
+
+
+1) La variable respuesta contiene una considerable cantidad de ceros (31%).
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# Tablas exploratorias
+
+tabla1 <- as.data.frame(table(DF$conteo==0)/nrow(DF))
+tabla1[2,2]
+with(DF, ftable(conteo~sitio))
+```
+
+2) En el sitio b, las muestras están des-balanceadas, agrupándose mayoritariamente en altas concentraciones de humedad. 
+3) En altas concentraciones de humedad (>70), hay una menor cantidad de conteos iguales a cero, en relación a los conteos mayores a mayores a cero, principalmente en los sitios b y d.
+4) El número de conteos tiende a aumentar en relación a la humedad.
+
+
+&nbsp;  
+```{r echo=FALSE, fig.height=4, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# Gráficos exploratorios
+
+DF1<-DF[DF$conteo > 0, ]
+DF2<-DF[DF$conteo == 0, ]
+
+g1=ggplot(DF2, aes(x=sitio, y=humedad)) + 
+  theme_light()+
+  geom_violin(size=0.5,aes(col=sitio))+
+  labs(x="sitio",y="humedad")+
+  geom_jitter(width = 0.25)+
+  ggtitle("Conteos iguales a 0")+
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5, size = 10))
+
+g2=ggplot(DF1, aes(x=sitio, y=humedad)) + 
+  theme_light()+
+  geom_violin(size=0.5,aes(col=sitio))+
+  labs(x="sitio",y="humedad")+
+  geom_jitter(width = 0.25)+
+  ggtitle("Conteos mayores a 0")+
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5, size = 10))
+
+g3=ggplot(DF, aes(x=humedad, y=conteo)) + 
+  geom_point(size=1,aes(col=sitio))+theme_light()+
+  geom_smooth(method="glm",se=T, fullrange=T, size=0.5,aes(col=sitio), alpha = 0.5)+
+  labs(x="humedad",y="conteo")+
+  ggtitle("Set original de datos")+
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5, size = 10))
+
+g4=ggplot(DF1, aes(x=humedad, y=conteo)) + 
+  geom_point(size=1,aes(col=sitio))+theme_light()+
+  geom_smooth(method="glm",se=T, fullrange=T, size=0.5,aes(col=sitio), alpha = 0.5)+
+  labs(x="humedad",y="conteo")+
+  ggtitle("Set sin ceros")+
+  theme(legend.position="none", plot.title = element_text(hjust = 0.5, size = 10))
+
+plot_grid(g1,g2,g3,g4, ncol = 2, nrow = 2)
+
+library(sjPlot)
+
+```
+
+
+&nbsp;  
+
+## c)
+
+El modelo a utilizar será modelo de mezcla para conteos inflados en ceros (Zero Inflated), ya que la variable respuesta son conteos con una considerable cantidad de ceros. 
+
+## e)
+
+A continuación se presentan las gráficas correspondiente a los estimados y sus intervalos de confianza, tanto para la parte codicional (PC) como para la parte inflada en ceros (ZI).
+
+
+&nbsp; 
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+# Modelo inicial
+m.zip0=glmmTMB(conteo~sitio*humedad, 
+              zi=~sitio*humedad, 
+              family="poisson", data=DF)
+
+summary(m.zip0)
+
+# Quitando la interacción en conteo
+m.zip=glmmTMB(conteo~sitio+humedad, 
+              zi=~sitio*humedad, 
+              family="poisson", data=DF)
+
+summary(m.zip)
+
+# Quitando la interacción en ceros
+m.zip1=glmmTMB(conteo~sitio+humedad, 
+              zi=~sitio+humedad, 
+              family="poisson", data=DF)
+
+summary(m.zip1)
+
+# Comparación de modelos LRT
+anova(m.zip0,m.zip)
+anova(m.zip,m.zip1)
+
+# Intervalos de confianza del modelo seleccionado
+out.zip=tidy(m.zip,conf.int=T)
+out.zip
+```
+
+```{r echo=FALSE, fig.height=4, message=FALSE, warning=FALSE}
+
+# Gráfico de los estimados del modelo con sus intervalos de confianza
+
+mod.zip<-plot_model(m.zip, transform = NULL, title = "Modelo ZIP", colors = c("red", "blue"), show.intercept = T, show.zeroinf = T, vline.color = "gray")+theme_light()
+
+mod.zip
+```
+
+
+&nbsp;  
+**Por lo tanto, en PC, las ecuaciones que describen los conteos en relación a la humedad son las siguientes (considerando que la función de enlace se encuentra en escala log, al ser una distribución de probabilidades de Poisson):**
+
+&nbsp;  
+*Para el sitio A:* $$e^{ [1,04 + (0,01 * humedad )  ] } $$
+ 
+*Para el sitio B:* $$e^{ [(1,04-0.09) + (0,01 * humedad )  ] } $$
+
+*Para el sitio C:* $$e^{ [(1,04+0.17)+ (0,01 * humedad )  ] } $$
+
+*Para el sitio D:* $$e^{ [(1,04+0.25)+ (0,01 * humedad )  ] } $$
+
+&nbsp;  
+**Para ZI, las ecuaciones que describen los conteos en ceros en relación con la humedad son las siguientes (considerando que la función de enlace se encuentra en escala logit, al ser una distribución de probabilidades de Binomial):**
+
+&nbsp;  
+*Para el sitio A:* $$\frac{e^{[-1.31 + (0.01 * humedad )]}}{1 + e^{[-1.31 + (0.01 * humedad )]}} $$
+
+*Para el sitio B:* $$\frac{e^{[-1.31 + 4.77 + ((0.01 - 0.09) * humedad )]}}{1 + e^{[-1.31 + 4.77 + ((0.01 - 0.09) * humedad )]}} $$
+
+*Para el sitio C:* $$\frac{e^{[-1.31 + 0.08 + ((0.01 - 0.01) * humedad )]}}{1 + e^{[-1.31 + 0.08 + ((0.01 - 0.01) * humedad )]}} $$
+
+
+*Para el sitio D:* $$\frac{e^{[-1.31 + 4.54 + ((0.01 - 0.09) * humedad )]}}{1 + e^{[-1.31 + 4.54 + ((0.01 - 0.09) * humedad )]}} $$
+
+## f)
+
+Se observa un buen ajuste del modelo en los residuos obtenidos por simulación, ya que no es evidente alguna tendencia en su distribución. Como indicador adicional, la prueba KS (Kolmogórov-Smirnov) que retorna el gráfico, fue no significativa.
+
+
+&nbsp;
+
+```{r echo=FALSE, fig.height=4.2, message=FALSE, warning=FALSE}
+# Validación del modelo obteniendo los residuales por simulación
+
+res.zip=simulateResiduals(fittedModel=m.zip,n=500,refit=T,plot=F)
+plot(res.zip, rank =T, quantreg = F)
+```
+
+
+&nbsp;  
+
+
+&nbsp;  
+
+**RESIDUOS PARA LAS VARIABLES HUMEDAD Y SITIO**
+
+
+&nbsp;  
+```{r echo=FALSE, fig.height=4, message=FALSE, warning=FALSE, results='hide'}
+
+# Graficos de validación 
+
+par(mfrow=c(1,2))
+plot(res.zip$scaledResiduals~DF$humedad,xlab="humedad",ylab="Residual")+
+  abline(0.5,0, lwd=1.5, col="red")
+plot(res.zip$scaledResiduals~DF$sitio,main="",xlab="sitio",ylab="Residual")
+  abline(0.5,0, lwd=1.5, col="red")
+
+```
+
+
+## g)
+
+Inicialmente incluí en el modelo, tanto para PC, como para ZI, las dos variables explicativas y sus interacciones (m.zip0). Como no obtuve interacción entre las variables en PC, pero si en ZI, eliminé la interacción en PC, generando un nuevo modelo (m.zip). Los comparé por AIC y máximo de verosimilitud y no mostraron diferencias significativas, por lo cual me quedo con el más simple (m.zip).  
+Luego, quité la interacción en ZI para intentar simplificarlo (m.zip1), pero al evaluar por máximo de verosimilitud y AIC, se obtienen diferencias significativas, por lo cual decidí quedarme con el modelo más general, o sea m.zip. 
+
+## h)
+
+En PC, la concentración de humedad influye en el conteo de artrópodos, aumentando su número con la humedad. Sin embargo no se observa interacción entre los distintos sitios y la humedad, por lo cual el efecto de la humedad en el conteo de artrópodos sería similar en todos sitios.  
+En ZI, hay interacción entre sitios y la humedad, por lo cual el efecto de esta variable sobre los conteos iguales a ceros de artrópodos, difiere en los distintos sitios. Por ejemplo, en B y D, a medida que aumenta la humedad disminuye la probabilidad de obtener conteos iguales a cero, mientras que en A y C, la probabilidad de encontrar conteos iguales a cero es similar en todo el rango de humedad.
+
+
+&nbsp;  
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Y así concluye ...
+
+pred.zip=ggpredict(m.zip, terms = c("humedad  [all]", "sitio"))
+final.zip=plot(pred.zip)+ theme_light()+labs(x="humedad")+ ggtitle("PC")+
+  theme(axis.title.y=element_blank())
+final.zip
+```
+
+
+&nbsp;  
+
+
+# PREGUNTA 2
+
+```{r include=FALSE}
+# Carga de datos
+DF3=read.csv("/home/federico/Escritorio/Examen/pregunta2.csv",header=T)
+str(DF3)
+DF3$block<-as.factor(DF3$block)
+DF3$geno<-as.factor(DF3$geno)
+str(DF3)
+
+```
+
+## a)
+La variable respuesta es una variable numérica. Sus posibles distribuciones de probabilidades son: Normal, LogNormal y Gamma.  
+El diseño experimental corresponde a un diseño de bloques aleatorizados. La variable block tiene solo cuatro niveles (<5), por lo cual podría no ser considerada como una variable aleatoria, y considerar al diseño como factorial de 3 factores (block, geno y fert). Sin embargo, en este ejemplo decidí tomar (a modo de ejercicio de interpretación del modelo) a la variable block como aleatoria. Las variables explicativas con efectos fijos son geno (categórica de 3 niveles) y fert (numérica).   
+Se observa no solo por las gráficas de CDF y QQPLOT, sino también por los resultados del AIC, que la distribución de probabilidades que mejor se ajusta es normal (aunque las tres ajustan bien).
+
+
+&nbsp;  
+
+
+&nbsp;
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, paged.print=TRUE}
+
+# Posibles distribuciones de la variable respuesta
+
+normal=fitdist(DF3$y,"norm")
+lnormal=fitdist(DF3$y,"lnorm")
+gama=fitdist(DF3$y,"gamma")
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+  cdfcomp(list(normal,lnormal,gama),horizontals=F,ylogscale = T,xlogscale = F, lwd=2,addlegend=T,legendtext=c("Normal","LNormal","Gama"))
+  qqcomp(list(normal,lnormal,gama),addlegend=T,legendtext=c("Normal","LNormal","Gama"))
+par(mfrow=c(1,1))
+
+```
+
+
+&nbsp;
+**ANÁLISIS DEL AIC**
+
+
+&nbsp;
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# AIC de las distribuciones
+
+aic2<-as.data.frame( gofstat(list(normal,lnormal,gama))$aic) 
+names (aic2)[1] = "AIC"
+
+format_table(aic2, format = "markdown", align = c("c", "c"))
+```
+
+## b)
+
+1) En el bloque 1, la variable respuesta es diferente a los otros 3 bloques, la media es mayor. 
+En este aumento no pareciera verse afectada la pendiente (al evaluar respuesta sobre fertilidad), pero si un incremento en el intercepto (el genotipo 2 fue el menos afectado por el cambio en bloque 1 y el genotipo 3 el más afectado).
+2) El genotipo 2 pareciera tener una mejor respuesta (peso de la semillas) en los todos los niveles de fertilización, en los bloques 2, 3 y 4.
+3) A medida que aumenta la fertilización aumenta la variable respuesta.
+
+
+&nbsp;
+
+
+&nbsp;
+**TABLAS EXPLORATORIAS**
+
+
+&nbsp;
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# Algunas tablas
+
+tab1<-summaryBy(y~geno, data=DF3, FUN=c(mean, sd, length))
+tab2<-summaryBy(y~fert, data=DF3, FUN=c(mean, sd, length))
+tab3<-summaryBy(y~block, data=DF3, FUN=c(mean, sd, length))
+
+
+format_table(tab1, format = "markdown", align = c("c", "c", "c", "c"))
+format_table(tab2, format = "markdown", align = c("c", "c", "c", "c"))
+format_table(tab3, format = "markdown", align = c("c", "c", "c", "c"))
+
+```
+
+
+&nbsp;
+```{r echo=FALSE, fig.height=3.5, message=FALSE, warning=FALSE}
+
+# Graficos exploratorios
+
+ggplot(DF3,aes(x=fert, y=y))+
+  geom_point(aes(shape=geno, colour=geno), size = 2)+
+  geom_smooth(method="glm",se=T, fullrange=T, size=0.5, alpha = 0.3, colour ="black", linetype= "longdash")+
+  theme_light()+
+  xlab("Fertilización")+
+  ylab("Respuesta")+
+  facet_grid(~block, scales = "free", drop = T)
+  
+```
+
+## c)
+
+Es un modelo mixto, donde la variable bloque es modelada como efecto aleatorio (ya que no deseo estimar su efecto, sino controlarlo experimentalmente y eliminarlo del analisis para detectar el efecto de los efectos fijos).
+
+
+## e)
+A continuación se presentan las gráficas correspondiente a los estimados y sus intervalos de confianza, tanto para los efectos fijos como aleatorios.
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+# Modelo inicial
+m1.1=lmer(y~geno+fert+geno:fert+(1|block), data=DF3)
+
+
+# Quitando la interacción de las variables exploratorias
+m1.2=lmer(y~geno+fert+(1|block), data=DF3)
+
+# Agregando la pendiente en las variables fijas
+m1.3=lmer(y~geno+fert+geno:fert+(fert|block), data=DF3)
+  
+
+# Comparación de modelos 
+nc=detectCores()
+clus=makeCluster(rep("localhost",nc))
+
+# Bootstrap paramétrico
+PB1<-PBmodcomp(largeModel=m1.1, smallModel=m1.2, nsim = 1000, cl=clus)
+PB2<-PBmodcomp(largeModel=m1.3, smallModel=m1.1, nsim = 1000, cl=clus)
+
+# cAIC
+cAIC(m1.1, method = "conditionalBootstrap", B=500) [5]
+cAIC(m1.2, method = "conditionalBootstrap", B=500) [5]
+cAIC(m1.3, method = "conditionalBootstrap", B=500) [5]
+
+# Analisis de residuos de modelo m1.1
+par(mfrow=c(1,2),cex.lab=1.5, cex.axis=1.3) 
+  resid=resid(m1.1,type="pearson")
+  plot(fitted(m1.1), resid, ylab="Residuales", xlab="Predichos",main=""); abline(h=0)
+  qqnorm(resid, ylab="Cuant. teoricos", xlab="Cuant Obs resid",main="")
+  qqline(resid,lwd=1.5, col="red")
+par(mfrow=c(1,1),cex.lab=1, cex.axis=1)
+
+# Distancias de Cook de modelo m1.1
+cd.lev1=cooks.distance(m1.1, level=1)
+cd.block=cooks.distance(m1.1, group = "block")
+par(mfrow=c(1,2),cex.lab=1.5, cex.axis=1.3)
+  plot(cd.lev1, type="S", xlab="dato", ylab="Distancia de Cook")
+  plot(cd.block, type="S",xlab="block", ylab="Distancia de Cook", xlim = c(0,5))
+par(mfrow=c(1,1),cex.lab=1, cex.axis=1)
+
+which(cd.lev1==max(cd.lev1))
+
+# WTF 41?
+DF3[DF3$fert==0 & DF3$block==4,]
+
+### Análisis del set de datos, removiendo la muestra 41. Ya que fue el dato con mayor distancia de Cook. ###
+
+DF3b <- DF3[-41,]
+
+m1.1b=lmer(y~geno+fert+geno:fert+(1|block), data=DF3b)
+summary(m1.1b)
+
+# Analisis de residuos de modelo m1.1b
+par(mfrow=c(1,2),cex.lab=1.5, cex.axis=1.3) 
+  resid=resid(m1.1b,type="pearson")
+  plot(fitted(m1.1b), resid, ylab="Residuales", xlab="Predichos",main=""); abline(h=0)
+  qqnorm(resid, ylab="Cuant. teoricos", xlab="Cuant Obs resid",main="")
+  qqline(resid,lwd=1.5, col="red")
+par(mfrow=c(1,1),cex.lab=1, cex.axis=1)
+
+# NO HAY MEJORA EN LOS RESIDUOS REMOVIENDO LA MUESTRA 41, POR LO TANTO ME QUEDO CON EL MODELO m1.1.
+
+# Solo para poder imprimir el resumen en los anexos, ya que en la pregunta 3 también el modelo seleccionado se llama m1.1.
+Mr.Hyde<-m1.1
+
+```
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# R cuadrado
+r.squaredGLMM(m1.1)
+
+# Significancia de los efectos fijos
+require(lmerTest) # corrección de Sattherwhaite
+m1.1Sat=lmer(y~geno+fert+geno:fert+(1|block), data=DF3, REML=F)
+summary(m1.1Sat)
+
+# IC 95%
+confint(m1.1Sat)
+detach(package:lmerTest) 
+
+```
+
+
+&nbsp;
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+# Efectos fijos
+plot_model(m1.1,type = "est", transform = NULL, title = "Efectos fijos", colors = c("red", "blue"), show.intercept = F, vline.color = "gray")+theme_light()
+```
+
+
+
+&nbsp;
+
+```{r echo=FALSE, fig.height=3.5, message=FALSE, warning=FALSE}
+# Gŕafico efectos aleatorios
+plot_model(m1.1,type = "re", transform = NULL, title = "Efectos aleatorios", colors = c("red", "blue"), show.intercept = T,  vline.color = "gray")+theme_light()
+
+```
+
+
+## f y g)
+
+Inicialmente incluí en el modelo, la variable geno, fert y su interacción como efectos fijos y solo el intercepto como efecto aleatorio (m1.1).  Luego probé quitar la interacción de los efectos fijos (m1.2), pero al compararlos por boostrap paramétrico mostraron diferencias significativas (p valor de LRT < 0.001 y el test de PB = 0.002), por lo tanto me quedé con el modelo más general m1.1.  
+Luego intenté incluir la pendiente a los efectos aleatorios (m1.3), los evalué nuevamente por boostrap paramétrico y no mostraron diferencias significativas (p valor de LRT = 0.64, y el test PB = 0.42), por lo cual elegí el modelo más sencillo, nuevamente m1.1. Además comprobé por cAIC como medida de calidad relativa, que el mejor modelo es m1.1 (Valores de cAIC para m1.1=356, para m1.2=368, para m1.3=358).  
+Para validar el modelo entonces, realicé un grafico de residuos que fue aceptable y un gráfico QQPLOT que también resulto aceptable, aunque con un poco de dispersión en la cola inferior.  
+Para detectar datos atípicos evalué la distancia de Cook, y la que contuvo una mayor distancia fue la muestra 41 (resulto ser un dato con una variable respuesta muy alta, para la fertilidad 0 en el bloque 4). Quité ese dato del set, y volvi a generar al mismo modelo sin ese dato (m1.1b) para comprobar si mejoraba la cola inferior en el gráfico QQPLOT, y no obtuve un resultado satisfactorio, por lo cual volví a quedarme con el modelo original (m1.1).
+
+
+
+&nbsp;
+
+```{r echo=FALSE, fig.height=4, message=FALSE, warning=FALSE}
+# Gráficos
+
+# Analisis de residuos de modelo m1.1
+par(mfrow=c(2,2)) 
+  resid=resid(m1.1,type="pearson")
+  plot(fitted(m1.1), resid, ylab="Residuales", xlab="Predichos",main="SET COMPLETO"); abline(h=0)
+  qqnorm(resid, ylab="Cuant. teoricos", xlab="Cuant Obs resid",main="SET COMPLETO")
+  qqline(resid,lwd=1.5, col="red")
+
+  # Analisis de residuos de modelo m1.1b
+  resid=resid(m1.1b,type="pearson")
+  plot(fitted(m1.1b), resid, ylab="Residuales", xlab="Predichos",main="SET SIN 41"); abline(h=0)
+  qqnorm(resid, ylab="Cuant. teoricos", xlab="Cuant Obs resid",main="SET SIN 41")
+  qqline(resid,lwd=1.5, col="red")
+par(mfrow=c(1,1),cex.lab=1, cex.axis=1)
+
+```
+
+
+&nbsp;
+Para obtener los p valores del modelo, utilicé la corrección de Sattherwhaite y todos los parámetros resultaron ser significativos (p<0.05). También calculé el R2 del modelo y obtuve que la deviancia explicada es del 92%, de los cuales un 78% es explicado por los efectos fijos y un 14% por los efectos aleatorios.
+
+
+## h)
+
+Una de las primeras observaciones es el notorio efecto del bloque 1, respecto los otros 3 (los cuales tienen una respuesta similar entre ellos). Se observa que el intercepto es mucho mayor en este bloque, mientras que no hay efecto significativo en la pendiente.  
+El genotipo 2, tiene diferencias significativas en el intercepto respecto a los otros genotipos (o sea, una mejor respuesta de base), sin embargo el genotipo 3 tiene una mayor pendiente, para lo cual en el modelo, a altos niveles de fertilización el bloque 3 tendría una respuesta similar a la del genotipo 2.
+
+&nbsp;
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+mod.pred<-plot_model(m1.1,type = "pred", terms = c("fert", "geno"),title = "Modelo final", colors = c("red", "blue","green"))+theme_light()
+
+mod.pred
+# CARGANDO...
+# 10% █▒▒▒▒▒▒▒▒▒
+# 20% ██▒▒▒▒▒▒▒▒
+# 30% ███▒▒▒▒▒▒▒
+# 40% ████▒▒▒▒▒▒
+# 50% █████▒▒▒▒▒
+# 60% ██████▒▒▒▒
+# 70% ███████▒▒▒
+# 80% ████████▒▒
+# 90% █████████▒
+# 99% ██████████
+# ¡The final plot!
+
+```
+
+
+&nbsp;
+Entonces, por ejemplo si quisieramos estimar cuales serían los pesos de las semillas fertilizando con 120, en el genotipo 3, en los bloques 1 y 2:
+
+
+&nbsp;
+*BLOQUE 1 = 204.5*
+$$(126.2-9.8+17.3)+[(0.36+0.23)*120]$$
+
+
+&nbsp;
+*BLOQUE 2 = 183.5*
+$$(126.2-9.8-3.75)+[(0.36+0.23)*120]$$
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Carga de datos
+DF4=read.csv("/home/federico/Escritorio/Examen/pregunta3.csv",header=T)
+```
+  
+# PREGUNTA 3
+
+
+&nbsp;
+**NOTA:**
+Asumo en este ejercicio como Cura = 0 a quienes no fueron curados, y Cura = 1 a quienes si fueron curados.
+
+## a)
+En este caso, la variable Cura es la variable respuesta y es binaria cuya distribución es binomial. Hay variables explicativas con efectos fijos (Edad, Fuma, IL6 y CRP) y variables con efectos aleatorios (HospitalID y DoctorID). Dentro de las variables explicativas numéricas se incluye Edad, IL6 y CRP, mientras que la variable explicativa categórica es solo una: Fuma (con tres niveles: antes, actual, nunca). Las variables aleatorias se encuentran anidadas, doctorID dentro de HospitalID.
+
+
+## b)
+
+1) Se observa para los 3 niveles de fumadores una mayor posibilidad de curarse a menores edades. Hay una mayor cantidad de muestras para mayores de 60 correspondientes a quienes nunca fumaron.
+2) A medida que aumentan las concentraciones de IL6, disminuye la probabilidad de curarse, para todos los tipos de fumadores.
+3) A media que aumentan las concentraciones de CRP, disminuye la probabiidad de curarse.
+
+
+&nbsp;
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+# Gráficos exploratorios
+
+g5 <- ggplot(DF4, aes(x=Edad, y= Cura)) + 
+  geom_jitter (height = 0.05, size=2,aes(color=Fuma), alpha=0.5)+theme_light()+ 
+  stat_smooth(method = 'glm', method.args = list(family = "binomial"), se = TRUE, fullrange=F, aes(color=Fuma))+
+  labs(x="Edad",y="Cura")+
+  theme(legend.position=c(.5,.7), plot.title = element_text(hjust = 0.5, size = 10),legend.title=element_blank())
+
+
+g6 <- ggplot(DF4, aes(x=IL6, y=Cura)) + 
+  geom_jitter (height = 0.05, size=2,aes(color=Fuma), alpha=0.5)+theme_light()+ 
+  stat_smooth(method = 'glm', method.args = list(family = "binomial"), se = TRUE, fullrange=F, aes(color=Fuma))+
+  labs(x="IL6",y="Cura")+
+  theme(legend.position=c(.5,.7), plot.title = element_text(hjust = 0.5, size = 10),legend.title=element_blank())
+
+m1.1 <- ggplot(DF4, aes(x=CRP, y=Cura)) + 
+  geom_jitter (height = 0.05, size=2,aes(color=Fuma), alpha=0.5)+theme_light()+ 
+  stat_smooth(method = 'glm', method.args = list(family = "binomial"), se = TRUE, fullrange=F, aes(color=Fuma))+
+  labs(x="CRP",y="Cura")+
+  theme(legend.position=c(.5,.7), plot.title = element_text(hjust = 0.5, size = 10),legend.title=element_blank())
+
+
+detach(package:sjPlot)
+plot_grid(g5,g6,m1.1, ncol = 3)
+
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Corregir DF4
+DF4<-DF4[,-c(1,4,6,7,8)]
+DF4$Cura<-as.factor(DF4$Cura)
+DF4$doctorID<-as.factor(DF4$doctorID)
+DF4$HospitalID<-as.factor(DF4$HospitalID)
+
+DF4$Edad =as.vector(scale(DF4$Edad, center=T, scale=T))
+DF4$IL6 =as.vector(scale(DF4$IL6, center=T, scale=T))
+DF4$CRP =as.vector(scale(DF4$CRP, center=T, scale=T))
+```
+
+
+&nbsp;
+4) La probabilidad de curarse pareciera estar influenciada por el hospital y los doctores. Hay casos en que los doctores (11 de ellos) curan el 100% de los afectados que atienden y muchos casos en que los doctores (88 de ellos) no logran curar a ningún afectado.También hay hospitales en los que el porcentaje de pacientes curados es muy bajo (<10%), y otros en los que supera el 40%.
+
+
+&nbsp;
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+# Hospitales
+
+hospitales<-split(DF4,DF4$HospitalID)
+DF_Hosp <- data.frame()
+x<-1
+for (i in 1:length(hospitales)) {
+  tot <-sum(hospitales[[i]][["Cura"]]==0 | hospitales[[i]][["Cura"]]==1)
+  cur <- sum(hospitales[[i]][["Cura"]]==1)
+  porc <- cur * 100 / tot
+  DF_Hosp[x,1] <- porc
+  x <- x + 1
+}
+
+names(DF_Hosp)[1]<-"% de pacientes curados"
+
+# Doctores
+
+doctor<-split(DF4,DF4$doctorID)
+DF_Doc <- data.frame()
+x<-1
+for (i in 1:length(doctor)) {
+  tot <-sum(doctor[[i]][["Cura"]]==0 | doctor[[i]][["Cura"]]==1)
+  cur <- sum(doctor[[i]][["Cura"]]==1)
+  porc <- cur * 100 / tot
+  DF_Doc[x,1] <- porc
+  x <- x + 1
+}
+
+names(DF_Doc)[1]<-"% de pacientes curados"
+
+hHosp <- ggplot(DF_Hosp, aes(x=DF_Hosp$`% de pacientes curados`)) +
+  geom_histogram(position="identity", alpha=0.5)+
+  geom_vline(aes(xintercept=mean(DF_Hosp$`% de pacientes curados`)), color="blue",
+             linetype="dashed")+
+  labs(title="Hospitales",x="% de pacientes curados", y = "Hospitales")+
+  theme_light()
+
+hDoc <- ggplot(DF_Doc, aes(x=DF_Doc$`% de pacientes curados`)) +
+  geom_histogram(position="identity", alpha=0.5)+
+  geom_vline(aes(xintercept=mean(DF_Doc$`% de pacientes curados`)), color="blue",
+             linetype="dashed")+
+  labs(title="Doctores",x="% de pacientes curados", y = "Doctores")+
+  theme_light()
+
+plot_grid(hHosp,hDoc, nrow = 1)
+
+# Cuantos doctores curaron al 100% de los pacientes:
+# length(DF_Doc[DF_Doc$`% de pacientes curados`==100,]) # = 11
+
+# Cuantos doctores curaron al 0% de los pacientes:
+# length(DF_Doc[DF_Doc$`% de pacientes curados`==0,]) # = 88
+
+```
+
+
+&nbsp;
+5) No se observa correlacion entre las variables explicativas
+
+
+&nbsp;
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+# Covariacion de variables exlicativas
+ggpairs(DF4[,c(1:5)], ggplot2::aes(colour=Cura))+theme_light()
+```
+
+## c) 
+
+Se tratata de un Modelo Lineal Mixto Generalizado, ya que su variable respuesta tiene distribución binomial (distinta a normal) y contiene variables fijas y aleatorias.  Como las variables aleatorias se encuentran anidadas (doctorID dentro de HospitalID), considere el ejemplo con un diseño experimental de Modelo Anidado.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+# FUERZA BRUTA!
+m0=glmer(Cura~Fuma*IL6*CRP*Edad-1+(1|HospitalID/doctorID), data=DF4, family=binomial, glmerControl(optimizer = c("bobyqa"))) 
+
+# Modelo inicial
+m1=glmer(Cura~Fuma+IL6+CRP+Edad+Fuma:Edad+Fuma:IL6+Fuma:CRP-1+(1|HospitalID/doctorID), data=DF4, family=binomial, glmerControl(optimizer = c("bobyqa"))) 
+
+# Quitando la interacción Fuma:CRP
+m1.1=glmer(Cura~Fuma+IL6+CRP+Edad+Fuma:Edad+Fuma:IL6-1+(1|HospitalID/doctorID), data=DF4, family=binomial, glmerControl(optimizer = c("bobyqa"))) 
+
+summary(m1.1)
+
+anova(m1, m1.1) 
+
+# Como no hay diferencias significativas elijo el mas simple m1.1
+
+# Quitando CRP
+m1.2=glmer(Cura~Fuma+IL6+Edad+Fuma:Edad+Fuma:IL6-1+(1|HospitalID/doctorID), data=DF4, family=binomial, glmerControl(optimizer = c("bobyqa"))) 
+
+anova(m1.1, m1.2) 
+
+# Hay diferencias significativas con los modelos. Me quedo con m1.1
+
+# Quitando Fuma:IL6
+m1.3=glmer(Cura~Fuma+IL6+CRP+Edad+Fuma:Edad-1+(1|HospitalID/doctorID), data=DF4, family=binomial, glmerControl(optimizer = c("bobyqa"))) 
+
+anova(m1.1, m1.3)
+
+# Hay diferencias significativas con los modelos. Me quedo con m1.1
+
+# % de deviancia explicado del modelo final
+round(r.squaredGLMM(m1.1)*100,2)
+
+
+```
+
+```{r eval=FALSE, include=FALSE}
+# Comparar modelos
+nc=detectCores()
+cl=makeCluster(rep("localhost", nc))
+
+# El número de simulaciones es estremadamente bajo, pero si lo aumentaba la función no corría.
+
+PB3<-PBmodcomp(largeModel=m1, smallModel=m1.1, nsim = 50, cl=cl) 
+PB4<-PBmodcomp(largeModel=m1.1, smallModel=m1.2, nsim = 50, cl=cl)
+PB5<-PBmodcomp(largeModel=m1.1, smallModel=m1.3, nsim = 50, cl=cl)
+
+# cAIC <-- No corre, muy lento
+cAIC(m1.1, method = "conditionalBootstrap", B=50) [5]
+cAIC(m1.2, method = "conditionalBootstrap", B=50) [5]
+cAIC(m1.3, method = "conditionalBootstrap", B=50) [5]
+
+```
+
+
+## e)
+A continuación se presentan las gráficas correspondiente a los estimados y sus intervalos de confianza, tanto para los efectos fijos como aleatorios.
+
+
+&nbsp;
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+library(sjPlot)
+# Efectos fijos
+plot_model(m1.1,type = "est", transform = NULL, title = "Efectos fijos", colors = c("red", "blue"), show.intercept = F, vline.color = "gray")+theme_light()
+```
+
+
+&nbsp;
+*EFECTOS ALEATORIOS*  
+En doctores solo se muestran los 10 primeros. 
+
+
+&nbsp;
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+# Efectos aleatorios
+ef.aleat=cbind(ranef(m1.1)$doctorID,se.ranef(m1.1)$doctorID)
+names(ef.aleat)=c("int","SE.int")
+
+
+ef.aleat2=cbind(ranef(m1.1)$HospitalID,se.ranef(m1.1)$HospitalID)
+names(ef.aleat2)=c("int","SE.int")
+
+ef.aleat.re<-ef.aleat[1:10,]
+
+re1<-ggplot(ef.aleat.re, aes(x=row.names(ef.aleat.re),y=int))+
+  geom_point(size=2.5, col="red")+
+  geom_errorbar(aes(ymin=int-SE.int, ymax=int+SE.int),width=.5)+
+  theme_bw()+labs(y="Intercepto", x="Doctor")+coord_flip()
+
+re2<-ggplot(ef.aleat2, aes(x=row.names(ef.aleat2),y=int))+
+  geom_point(size=2.5, col="red")+
+  geom_errorbar(aes(ymin=int-SE.int, ymax=int+SE.int),width=.5,width=.5)+
+  theme_bw()+labs(y="Intercepto", x="Hospital")+coord_flip()
+
+detach(package:sjPlot)
+plot_grid(re1,re2, ncol = 2)
+
+library(sjPlot)
+
+```
+
+
+## f y g)
+
+En la selección de modelos, ninguno de los que propuse inicialmente variaba en sus efectos aleatorios, por lo cual utilicé el LRT para compararlos.  Alternativamente utilicé boostrap paramétrico (PBTest), pero con un número de simulaciones extremadamente bajo (50 simulaciones), si las aumentaba, el script demoraba demasiado y mi PC sobrecalentaba. Intenté ademas calcular los cAIC, pero al igual que con el boostrap el scrip demoraba demasiado y tuve que deternerlo.  
+En el primer modelo (m1), incluí las variables con efectos fijos Fuma, IL6, CRP, Edad, y la interacción entre Fuma:Edad, Fuma:IL6, Fuma:CRP y las variables aleatorias anidadas HospitalID y doctorID (HospitalId/doctorID).  Como la interacción Fuma:CRP no fue significativa, la quité, generando un nuevo modelo (m1.1), que al compararlo con el modelo anterior no mostraban diferencias significativas (p valor de LRT = 0.156 y el test de PB = 0.276), por lo tanto me quedo con el más simple m1.1.  
+Luego quité la interacción entre Fuma:IL6 (m1.3) pero al compararlo con m1.1 si había diferencias significativas por lo cual decidí quedarme con el más general m1.1 (p valor de LRT = 0.011 y el test de PB = 0.021).  Por último probé quitar CRP (m1.2), pero al compararlo con m1.1 había diferencias significativas por lo me quedo nuevamente con el más general m1.1 (p valor de LRT = 0.022 y el test de PB = 0.065).
+
+
+&nbsp;
+
+```{r echo=FALSE, fig.height=3.5, message=FALSE, warning=FALSE}
+### Validación
+
+# Residuos por simulación
+res.m1.1=simulateResiduals(fittedModel=m1.1,n=500,refit=F,plot=F)
+plot(res.m1.1, rank =F, quantreg = T)
+
+```
+
+
+&nbsp;
+
+
+&nbsp;
+
+
+&nbsp;
+```{r echo=FALSE, fig.height=3.5, message=FALSE, warning=FALSE}
+par(mfrow=c(2,2),mar=c(4,6,2,2))
+ plot(res.m1.1$scaledResiduals~DF4$Edad, cex.axis=1.3, cex.lab=1.5, xlab="Edad", ylab ="Residuales escalados")
+ abline(0.5,0, lwd=1.5, col="red") 
+
+ plot(res.m1.1$scaledResiduals~DF4$Fuma, cex.axis=1.3, cex.lab=1.5, xlab="Fuma", ylab ="Residuales escalados")
+ abline(0.5,0, lwd=1.5, col="red") 
+ 
+ plot(res.m1.1$scaledResiduals~DF4$IL6, cex.axis=1.3, cex.lab=1.5, xlab="IL6", ylab ="Residuales escalados")
+ abline(0.5,0, lwd=1.5, col="red") 
+ 
+ plot(res.m1.1$scaledResiduals~DF4$CRP, cex.axis=1.3, cex.lab=1.5, xlab="CRP", ylab ="Residuales escalados")
+ abline(0.5,0, lwd=1.5, col="red") 
+par(mfrow=c(1,1),cex.lab=1, cex.axis=1) 
+
+```
+
+
+&nbsp;
+
+
+&nbsp;
+
+
+&nbsp;
+
+
+
+```{r echo=FALSE, fig.height=3.5, message=FALSE, warning=FALSE, results='hide'}
+#Normalidad de los efectos aleatorios
+par(mfrow=c(1,2), cex.axis=1.3, cex.lab=1.5,oma=c(0,0,2,0))
+ qqnorm(ef.aleat$int, main="interceptos Doc"); qqline(ef.aleat$int, col="red")
+ qqnorm(ef.aleat2$int, main="Interceptos Hosp"); qqline(ef.aleat2$int, col="red")+
+   mtext("RESIDUOS DE LOS EFECTOS ALEATORIOS",outer=TRUE)
+par(mfrow=c(1,1),cex.lab=1, cex.axis=1) 
+
+```
+
+
+&nbsp;
+
+Validé el modelo utilizando los residuales obtenidos por simulación. Quise calcular las distancias de Cook utilizando la librería influence.ME, pero demoraba mucho tiempo. Los residuos de los efectos fijos se ajustan muy bien al modelo, y los residuos de los efectos aleatorios son aceptables, con algo de dispersión sobre la cola inferior.  
+Adicionalmente como es un Modelo Lineal Mixto Generalizado cuya variable respuesta es binomial, utilicé las curvas ROC y AUC. El AUC resultante fue del 88,4%, lo cual se explica como porcentaje en el cual el modelo predice bien. El brier score, que puede interpretarse como qué tan cerca está la predicción del caso real resultó de 0.12. 
+
+```{r echo=FALSE, fig.height=3, fig.width=4, message=FALSE, warning=FALSE}
+
+# Distancias de Cook <- Muy lento, mi compu va a explotar!
+
+# obs=influence(m1.1, obs=T)
+# Cook.obs=cooks.distance.estex(obs)
+# doctor=influence(m2.4, group="farm")
+# Cook.obs=cooks.distance.estex(obs)
+# Cook.doctor=cooks.distance.estex(doctor)
+# par(mfrow=c(1,2), cex.axis=1.3, cex.lab=1.5)
+#   plot(Cook.obs, xlab="Individuo", ylab="Cook distance",type="b")
+#   plot(Cook.doctor,xlab="Doctor", ylab="Cook distance",type="b")
+# par(mfrow=c(1,1), cex.axis=1, cex.lab=1)
+
+# ROC 
+
+# _▄▀▀▀▄_____________█▒▒▒█
+# _ █▒▒▒█____________ █▒▒▒█
+# _ █▒▒▒█____________█▒▒▒█
+# __ █▒▒▒█___________█▒▒▒█
+# ___█▒▒▒█__________█▒▒▒█
+# ____█▒▒▒█_________█▒▒▒█
+# ____█▒▒▒▀▄▀▀▄▀▀▀▄▒▒▒█
+# ____█▒▒▒-█▒▒▒█▒▒▒█▒▒▒█
+# ____█▒▒▒▒█▒▒▒█▒▒▒█▒▒▒█
+# ____█▒▒▒▒█▒▄▄▀▀▄▒▒█▒▒▒█
+# _____█▒▒▄▀▀▒▒▒▒█▒▒█▒▒▒█
+# _____█▄▀▒▒▒▒▒▒▄▀▒▒█▒▒▒█
+# ____▄▀▒▒▒▒▒▒▄▀▒▀▀▀▒▒▒ █
+# ____█▒▒▒▒▒▒█▒▒▒▒▒▒▒▒▒█
+# ____█▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒█
+# _____█▒▒▒▒▒▒▒▒▒▒▒▒▒▒█
+# ______ █▒▒▒▒▒▒▒▒▒▒▒▄▀
+
+# Vuelvo a cargar los datos en un nuevo dataframe para obtener el Bier Score.
+
+DF5=read.csv("/home/federico/Escritorio/Examen/pregunta3.csv",header=T)
+
+roc.m1.1=roc(response=DF5$Cura,predictor=fitted(m1.1))
+BrierScore<-mean((predict(m1.1,type='response')-DF5$Cura)^2)
+ggroc(roc.m1.1, colour = "blue")+ theme_light()+ labs(x="Especificidad", y="Sensibilidad")+
+  annotate("text", x=0.5, y=0.5, label= paste("AUC=",round(auc(roc.m1.1),2)), size=8, colour = "red") +  
+  annotate("text", x=0.5, y=0.3, label= paste("Brier score=",round(BrierScore,2)), size=8) 
+
+```
+
+
+## h)
+
+Se puede concluir entonces que la edad es un factor influyente en la probabilidad de curarse (a mayor edad menor es la probabilidad de curarse) y que el hecho de ser, haber sido o nunca haber sido fumador también afecta a dicha probabilidad. Además, se puede concluir que cuando los niveles de los bioindicadores (IL6 y CRP) aumentan, disminuye la probabilidad de curarse. En el caso de IL6 hay una interacción significativa entre los distintos tipos de fumadores, quienes hubieran fumado "antes", a medida que aumenta la concentración del bioindicador, con mayor intensidad disminuye la probabilidad de curarse.  
+También se concluye que hay efectos aleatorios entre los distintos doctores y también entre los distintos hospitales. Mientras hay doctores que curan el 100% de los pacientes, hay otros que no logran curar a sus pacientes. Algo similar sucede con los hospitales, donde en algunos se curan más del 40% de los pacientes, en otros menos del 10%.  
+Por ejemplo, tenemos un paciente de 50 años, con niveles de 5 unidades para IL6, 9 unidades para CRP y nunca fumo. Se quiere conocer la probabilidad de curarse si se atiende con el doctor 1 en el hospital 1, y con el doctor 177 del hospital 16.  
+A tener en cuenta:  
+1) Las variables numéricas para realizar el modelo fueron centradas y estandarizadas, por ello se escalan las variables para edad (-0.15, en vez de 50), IL6 (-0.8 en vez de 5) y CRP (1.29 en vez de 9).  
+2) El modelo es lineal en la función de enlace LOGIT, por ser su distribución binomial.  
+3) Los efectos aleatorios en los interceptos son para:  
+El doctor 1 = -2,14 y para el hospital 1 = -0,40.  
+Para el doctor 177 = 2,65 y para el hospital 16 = 0,51.
+
+
+&nbsp;  
+*Para el H1 D1 = 1.8% de curarse* 
+
+$$\frac{e^{[-1.46 - 2.14 - 0.40 + ((-0.10 - 0.1) * IL6) + (-0.07 * CRP) + ((-0.18 - 0.18) * EDAD )]}}{1 + e^{[-1.46 - 2.14 - 0.40 + ((-0.10 - 0.1) * IL6) + (-0.07 * CRP) + ((-0.18 - 0.18) * EDAD )]}} $$
+
+*Para el H16 D177 = 85% de curarse* 
+
+$$\frac{e^{[-1.46 + 2.65 + 0.51 + ((-0.10 - 0.1) * IL6) + (-0.07 * CRP) + ((-0.18 - 0.18) * EDAD )]}}{1 + e^{[-1.46 + 2.65 + 0.51 + ((-0.10 - 0.1) * IL6) + (-0.07 * CRP) + ((-0.18 - 0.18) * EDAD )]}} $$
+
+
+```{r echo=FALSE, fig.height=3.5, message=FALSE, warning=FALSE}
+
+pred_Edad=ggpredict(m1.1, terms = c("Edad [all]", "Fuma"))
+g7<-plot(pred_Edad)+ theme_light()+labs(y="% de la probabilidad de curarse", x="Edad")+theme(plot.title=element_blank(), legend.position=c(.6,.7), legend.title=element_blank())
+
+pred_IL6=ggpredict(m1.1, terms = c("IL6 [all]", "Fuma"))
+g8<-plot(pred_IL6)+ theme_light()+labs(y="% de la probabilidad de curarse", x="IL6")+theme(plot.title=element_blank(), legend.position=c(.6,.7), legend.title=element_blank())
+
+pred_CRP=ggpredict(m1.1, terms = c("CRP [all]", "Fuma"))
+g9<-plot(pred_CRP)+ theme_light()+labs(y="% de la probabilidad de curarse", x="CRP")+theme(plot.title=element_blank(), legend.position=c(.6,.7), legend.title=element_blank())
+
+
+detach(package:sjPlot)
+plot_grid(g7,g8,g9, ncol = 3)
+
+```
+
+# ANEXOS
+
+## PREGUNTA 1: 
+
+### Resumen del modelo
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(m.zip)
+```
+
+### Intervalos de confianza
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+format_table(out.zip[,-c(1,4,5,6,7)], format = "markdown", align = c("c", "c", "c", "c"))
+
+```
+
+## PREGUNTA 2: 
+
+### Resumen del modelo
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(m1.1Sat)
+```
+
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# Intervalos de confianza para los efectos fijos
+out.mod2<-tidy(Mr.Hyde,conf.int=T)
+out.mod2<-out.mod2[-c(7,8),-c(1,2,4,5,6,7,8)]
+
+format_table(out.mod2, format = "markdown", align = c("c", "c", "c"))
+
+```
+
+### Error Estándar para los efectos aleatorios
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ef.aleat.mod2=cbind(c(1:4),ranef(Mr.Hyde)$block,se.ranef(Mr.Hyde)$block)
+names(ef.aleat.mod2)=c("bloque", "int","SE.int")
+
+format_table(ef.aleat.mod2, format = "markdown", align = c("c", "c"))
+```
+
+## PREGUNTA 3: 
+
+### Resumen del modelo
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(m1.1)
+```
+
+### Intervalos de confianza para los efectos fijos
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+out.m1.1<-tidy(m1.1,conf.int=T)
+
+format_table(out.m1.1[-c(11,12),-c(1,2,4,5,6,7)], format = "markdown", align = c("c", "c", "c", "c"))
+
+```
+
+### Error Estándar para los efectos aleatorios  
+
+Se muestra a modo de ejemplo los primeros 10 hospitales y los primeros 10 doctores, para que no se haga tan extensa la tabla.
+
+
+&nbsp;  
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ef.aleat.m1.1D=cbind(c(1:407),ranef(m1.1)$doctorID,se.ranef(m1.1)$doctorID)
+names(ef.aleat.m1.1D)=c("doctor", "int","SE.int")
+ef.aleat.m1.1D <- ef.aleat.m1.1D[c(1:10),]
+format_table(ef.aleat.m1.1D, format = "markdown", align = c("c", "c","c"))
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ef.aleat.m1.1H=cbind(c(1:35),ranef(m1.1)$HospitalID,se.ranef(m1.1)$HospitalID)
+names(ef.aleat.m1.1H)=c("hospital", "int","SE.int")
+ef.aleat.m1.1H <- ef.aleat.m1.1H[c(1:10),]
+format_table(ef.aleat.m1.1H, format = "markdown", align = c("c", "c","c"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
